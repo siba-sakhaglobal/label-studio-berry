@@ -686,6 +686,185 @@ class AnnotationAPI(generics.RetrieveUpdateDestroyAPIView):
     name='get',
     decorator=extend_schema(
         tags=['Annotations'],
+        summary='Get annotation activity history',
+        description=(
+            'Return the timeline for a single annotation in the shape the LSF editor '
+            'expects (used to populate the History tab). Composed from existing '
+            'Annotation/Prediction/AnnotationState data — no new tables.'
+        ),
+        parameters=[
+            OpenApiParameter(name='pk', type=OpenApiTypes.INT, location='path', description='Annotation ID'),
+        ],
+        request=None,
+        responses={'200': OpenApiResponse(description='List of history items')},
+        extensions={'x-fern-audiences': ['internal']},
+    ),
+)
+class AnnotationHistoryAPI(generics.RetrieveAPIView):
+    """
+    GET /api/annotations/<pk>/history/ — activity timeline for one annotation.
+
+    Fixes BQ-9: LS OSS never populates the History tab because upstream lacks
+    both a backend endpoint and a frontend fetch hook. This endpoint composes
+    the timeline from data we already store:
+
+      1. All Prediction rows on the parent task (each rendered as 'prediction')
+      2. The annotation itself (rendered as 'imported' / 'prediction' /
+         'submitted' based on parent_prediction / import_id / last_action)
+      3. An 'updated' row if updated_at drifted from created_at with an
+         updated_by user
+      4. Any AnnotationState (Berry FSM) rows if fflag_feat_fit_568... is on
+
+    Response items match the frontend contract in
+    web/libs/editor/src/stores/AppStore.js:setHistory():
+      {id, pk, annotation_id, user, createdDate, actionType, comment, result, is_stub}
+    """
+
+    parser_classes = (JSONParser,)
+    permission_required = ViewClassPermission(GET=all_permissions.annotations_view)
+    queryset = Annotation.objects.all()
+    serializer_class = AnnotationSerializer  # only for DRF permission machinery
+
+    @staticmethod
+    def _user_dict(user):
+        if user is None:
+            return None
+        return {
+            'id': user.id,
+            'email': user.email,
+            'first_name': getattr(user, 'first_name', ''),
+            'last_name': getattr(user, 'last_name', ''),
+        }
+
+    def _annotation_action_type(self, annotation):
+        # Prefer the persisted last_action if set (Berry writes 'submitted' /
+        # 'updated' / 'imported' via the annotation-webhook path); otherwise
+        # infer from parent_prediction / import_id.
+        if annotation.last_action:
+            return annotation.last_action
+        if annotation.parent_prediction_id is not None:
+            return 'prediction'
+        if annotation.import_id is not None:
+            return 'imported'
+        return 'submitted'
+
+    def retrieve(self, request, *args, **kwargs):
+        annotation = self.get_object()
+        items = []
+
+        # 1. Predictions on the same task — one row each. Frontend renders these
+        #    with a model_version pseudo-user (no result restore, but timestamped).
+        preds = (
+            Prediction.objects.filter(task_id=annotation.task_id).order_by('-created_at').only(
+                'id', 'created_at', 'model_version', 'result', 'task_id'
+            )
+        )
+        for p in preds:
+            items.append(
+                {
+                    'id': f'prediction-{p.id}',
+                    'pk': p.id,
+                    'annotation_id': annotation.id,
+                    'user': None,
+                    'createdBy': p.model_version or 'prediction',
+                    'createdDate': p.created_at.isoformat() if p.created_at else None,
+                    'actionType': 'prediction',
+                    'comment': '',
+                    'result': p.result or [],
+                    'is_stub': False,
+                }
+            )
+
+        # 2. If updated_at drifted from created_at, emit an 'updated' row FIRST
+        #    (it's more recent).
+        try:
+            drifted = (
+                annotation.updated_at
+                and annotation.created_at
+                and (annotation.updated_at - annotation.created_at).total_seconds() > 1
+            )
+        except Exception:
+            drifted = False
+        if drifted and annotation.updated_by_id:
+            items.append(
+                {
+                    'id': f'annotation-updated-{annotation.id}',
+                    'pk': annotation.id,
+                    'annotation_id': annotation.id,
+                    'user': self._user_dict(annotation.updated_by),
+                    'createdBy': (annotation.updated_by.email if annotation.updated_by else ''),
+                    'createdDate': annotation.updated_at.isoformat(),
+                    'actionType': 'updated',
+                    'comment': '',
+                    'result': annotation.result or [],
+                    'is_stub': False,
+                }
+            )
+
+        # 3. The annotation's own creation row.
+        items.append(
+            {
+                'id': f'annotation-created-{annotation.id}',
+                'pk': annotation.id,
+                'annotation_id': annotation.id,
+                'user': self._user_dict(annotation.completed_by),
+                'createdBy': (annotation.completed_by.email if annotation.completed_by else ''),
+                'createdDate': (annotation.created_at.isoformat() if annotation.created_at else None),
+                'actionType': self._annotation_action_type(annotation),
+                'comment': '',
+                'result': annotation.result or [],
+                'is_stub': False,
+            }
+        )
+
+        # 4. Merge in any FSM AnnotationState rows for a richer trail when
+        #    fflag_feat_fit_568_finite_state_management ships enabled.
+        try:
+            from fsm.registry import get_state_model
+
+            state_model = get_state_model('annotation')
+            if state_model is not None:
+                for row in state_model.objects.filter(annotation_id=annotation.id).select_related('triggered_by')[:100]:
+                    tname = (row.transition_name or '').lower()
+                    # Map FSM transition_name → frontend actionType. Fallback to
+                    # 'updated' so it still renders with a sensible icon.
+                    if 'created' in tname:
+                        action = 'submitted'
+                    elif 'skip' in tname:
+                        action = 'skipped'
+                    elif 'accept' in tname:
+                        action = 'accepted'
+                    elif 'reject' in tname:
+                        action = 'rejected'
+                    else:
+                        action = 'updated'
+                    items.append(
+                        {
+                            'id': f'fsm-{row.id}',
+                            'pk': None,  # FSM rows are read-only, no restore target
+                            'annotation_id': annotation.id,
+                            'user': self._user_dict(row.triggered_by) if row.triggered_by_id else None,
+                            'createdBy': (row.triggered_by.email if row.triggered_by_id else ''),
+                            'createdDate': row.created_at.isoformat() if row.created_at else None,
+                            'actionType': action,
+                            'comment': row.reason or '',
+                            'result': annotation.result or [],
+                            'is_stub': True,  # Frontend will call hydrateHistoryItem — no-op fine.
+                        }
+                    )
+        except Exception as exc:  # pragma: no cover — best-effort merge
+            logger.debug('FSM history merge skipped for annotation %s: %s', annotation.id, exc)
+
+        # Order: newest first (matches AnnotationHistory.tsx lastItem = history[0]).
+        items.sort(key=lambda x: x.get('createdDate') or '', reverse=True)
+
+        return Response(items)
+
+
+@method_decorator(
+    name='get',
+    decorator=extend_schema(
+        tags=['Annotations'],
         summary='Get all task annotations',
         description='List all annotations for a task.',
         parameters=[

@@ -95,6 +95,10 @@ export const API_CONFIG = {
 
     // FSM
     fsmStateHistory: "GET:/fsm/entities/:entityType/:entityId/history",
+
+    // BQ-9: activity timeline for the Info→History tab (composed from
+    // existing Annotation / Prediction / FSM AnnotationState — no migration).
+    annotationHistory: "GET:/annotations/:annotationID/history/",
   },
   alwaysExpectJSON: false,
 };

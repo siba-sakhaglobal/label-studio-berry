@@ -28,6 +28,9 @@ _api_urlpatterns = [
 _api_annotations_urlpatterns = [
     path('<int:pk>/', api.AnnotationAPI.as_view(), name='annotation-detail'),
     path('<int:pk>/convert-to-draft', api.AnnotationConvertAPI.as_view(), name='annotation-convert-to-draft'),
+    # BQ-9: activity timeline for the Info→History tab (composed from
+    # existing Annotation / Prediction / AnnotationState — no migration).
+    path('<int:pk>/history/', api.AnnotationHistoryAPI.as_view(), name='annotation-history'),
 ]
 
 _api_drafts_urlpatterns = [

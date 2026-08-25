@@ -154,6 +154,42 @@ export const DataManagerPage = ({ ...props }) => {
       else history.push("/projects");
     });
 
+    // BQ-9: populate the Info→History tab. LS OSS ships setHistory() and
+    // hydrateHistoryItem() plumbing but nothing calls them. When the user
+    // selects an annotation in DataManager we fetch the activity timeline
+    // (predictions on the same task + the annotation itself + optional FSM
+    // rows) from the new /api/annotations/<pk>/history/ endpoint and push
+    // it into the LSF store via setHistory().
+    //
+    // NOTE on args: lsf-sdk.js:1163 invokes onSelectAnnotation(newlySelected,
+    // previouslySelected, options, sdk) — despite the parameter names inside
+    // the SDK. So the FIRST arg is the annotation the user just switched to.
+    dataManager.on("onSelectAnnotation", async (selectedAnnotation) => {
+      try {
+        const pk = selectedAnnotation?.pk ?? selectedAnnotation?.id;
+        if (!pk) return;
+        // Predictions live in the same annotation carousel but have their own
+        // panel; the History tab is annotation-only.
+        if (selectedAnnotation?.type === "prediction") return;
+        const lsfStore = dataManager?.lsf?.lsfInstance?.store ?? dataManager?.lsf?.lsf?.store;
+        if (!lsfStore || typeof lsfStore.setHistory !== "function") return;
+        const rows = await api.callApi("annotationHistory", {
+          params: { annotationID: pk },
+        });
+        if (!Array.isArray(rows)) return;
+        // setHistory bails unless the first row's annotation_id matches the
+        // currently-selected annotation pk (AppStore.js:955) — coerce every
+        // row so ordering isn't load-bearing.
+        const coerced = rows.map((r) => ({ ...r, annotation_id: Number(pk) }));
+        lsfStore.setHistory(coerced);
+      } catch (err) {
+        // Non-fatal: if history fetch fails, the panel just stays empty
+        // (Draft row still renders). Don't crash the labeling view.
+        // eslint-disable-next-line no-console
+        console.warn("[BQ-9] annotation history fetch failed:", err);
+      }
+    });
+
     if (interactiveBacked) {
       dataManager.on("lsf:regionFinishedDrawing", (reg, group) => {
         const { lsf, task, currentAnnotation: annotation } = dataManager.lsf;
