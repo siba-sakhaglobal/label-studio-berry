@@ -27,7 +27,7 @@ export const ProjectsList = ({ projects, currentPage, totalItems, loadNextPage, 
           totalItems={totalItems}
           urlParamName="page"
           pageSize={pageSize}
-          pageSizeOptions={[10, 30, 50, 100]}
+          pageSizeOptions={[10, 20, 30, 50, 100]}
           onPageLoad={(page, pageSize) => loadNextPage(page, pageSize)}
         />
       </div>

@@ -261,6 +261,12 @@ export const Pagination: FC<PaginationProps> = forwardRef(
         {pageSizeOptions?.length > 0 && (
           <div className={cn("pagination-ls").elem("page-size").toClassName()}>
             <Select
+              // BQ-20 (2026-08-26): placeholder covers the case where the
+              // effective pageSize isn't in pageSizeOptions (e.g. the Berry
+              // bundle patch defaults projects-list to 20 but the option
+              // list is [10, 30, 50, 100]). Without this, the trigger
+              // renders empty and looks broken.
+              placeholder="Items per page"
               value={pageSize}
               options={pageSizeOptions.map((v) => ({ label: `${v} per page`, value: v }))}
               onChange={(val: string) => {
