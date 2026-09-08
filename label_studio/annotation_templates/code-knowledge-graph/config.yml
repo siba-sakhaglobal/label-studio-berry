@@ -1,0 +1,44 @@
+title: Code Knowledge Graph (NER + Relations)
+type: community
+group: Code
+image: /static/templates/code-knowledge-graph.png
+details: |
+  <h1>Identify code entities and the relationships between them inside source files</h1>
+  <dl>
+    <dt>Industry Applications</dt>
+    <dd>legacy code understanding, code knowledge graphs, business rule mining, audit pattern detection, call-graph extraction, architecture analysis, PICK / UniBasic modernization, ERP code documentation</dd>
+    <dt>Associated Models</dt>
+    <dd>tree-sitter, LSP indexers, Gemini, GPT, Claude, custom rule extractors</dd>
+    <dt>Domain Terminology</dt>
+    <dd>subroutine, gosub, call graph, record locking, audit trail, attribute position, entry point, business rule</dd>
+  </dl>
+config: |
+  <View>
+    <Text name="code" value="$raw_source"/>
+    <Labels name="entity" toName="code">
+      <Label value="SUBROUTINE_NAME"   background="#4A90D9"/>
+      <Label value="PARAM_IN"          background="#27AE60"/>
+      <Label value="PARAM_OUT"         background="#E67E22"/>
+      <Label value="PARAM_INOUT"       background="#8E44AD"/>
+      <Label value="FILE_HANDLE"       background="#2ECC71"/>
+      <Label value="ATTRIBUTE_POS"     background="#F39C12"/>
+      <Label value="CALL_TARGET"       background="#E74C3C"/>
+      <Label value="GOSUB_LABEL"       background="#1ABC9C"/>
+      <Label value="ERROR_CODE"        background="#C0392B"/>
+      <Label value="SYSTEM_FUNCTION"   background="#7F8C8D"/>
+      <Label value="SELECT_STATEMENT"  background="#2980B9"/>
+      <Label value="UNVERIFIED_BLOCK"  background="#F1C40F"/>
+      <Label value="BUSINESS_RULE"     background="#9B59B6"/>
+      <Label value="LOCK_OPERATION"    background="#E91E63"/>
+    </Labels>
+    <Relations>
+      <Relation value="CALLS"/>
+      <Relation value="READS_FROM"/>
+      <Relation value="WRITES_TO"/>
+      <Relation value="LOCKS"/>
+      <Relation value="PASSES_PARAM"/>
+      <Relation value="VALIDATES"/>
+      <Relation value="GOSUB_TO"/>
+      <Relation value="RETURNS_ERROR"/>
+    </Relations>
+  </View>

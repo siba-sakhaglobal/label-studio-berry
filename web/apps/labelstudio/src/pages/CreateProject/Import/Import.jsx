@@ -1,671 +1,301 @@
-import { SampleDatasetSelect } from "@humansignal/app-common/blocks/SampleDatasetSelect/SampleDatasetSelect";
-import { ff, formatFileSize } from "@humansignal/core";
-import { IconCode, IconErrorAlt, IconFileUpload, IconInfoOutline, IconTrash, IconUpload } from "@humansignal/icons";
-import { cn as scn } from "@humansignal/shad/utils";
-import { useAtomValue } from "jotai";
-import Input from "libs/datamanager/src/components/Common/Input/Input";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { useAPI } from "../../../providers/ApiProvider";
+// Berry KG-only replacement for LS's "Data Import" tab.
+//
+// Replaces upstream's file-upload / URL-paste / sample-data UI with a single
+// dropdown of Berry Knowledge Graphs. On Save, we intercept the outgoing
+// project-create round-trip (LS calls PATCH /api/projects/<id> to finalize
+// the draft) and POST /studio/ls/import_from_kg to hydrate the fresh
+// project with tasks pulled from the selected KG.
+//
+// Why the fetch monkey-patch: LS's CreateProject.jsx (line ~140) calls
+//   updateProject(id, {is_draft: false})  →  finishUpload()  →  redirect.
+// finishUpload is our injected `onFinishUpload` callback (see useImportPage
+// override below), so we hook there — no monkey-patch needed on `fetch`.
+//
+// Copied by patches/web/install-source-forks.sh into:
+//   LS_SRC/apps/labelstudio/src/pages/CreateProject/Import/Import.jsx
+//
+// Ignore the upstream props we don't need (highlightCsvHandling, csvHandling,
+// setCsvHandling, addColumns, onSampleDatasetSelect, onFileListUpdate,
+// dontCommitToProject) — destructured with defaults so LS doesn't crash.
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Button, Typography } from "@humansignal/ui";
 import { cn } from "../../../utils/bem";
-import { unique } from "../../../utils/helpers";
-import { sampleDatasetAtom } from "../utils/atoms";
 import "./Import.prefix.css";
-import { Button, CodeBlock, SimpleCard, Spinner, Tooltip, Typography, Badge } from "@humansignal/ui";
-import truncate from "truncate-middle";
-import samples from "./samples.json";
-import { importFiles } from "./utils";
 
 const importClass = cn("upload_page");
-const dropzoneClass = cn("dropzone");
 
-// Constants for file display and animation
-const FLASH_ANIMATION_DURATION = 2000; // 2 seconds
-const FILENAME_TRUNCATE_START = 24;
-const FILENAME_TRUNCATE_END = 24;
+// mcp-client is proxied at /mcp-client/ by nginx (same-origin as the LS SPA);
+// falls back to localhost:8080 for dev.
+const MCP_CLIENT_BASE =
+  typeof window !== "undefined" && window.location?.hostname === "localhost"
+    ? "http://localhost:8080"
+    : "/mcp-client";
 
-function flatten(nested) {
-  return [].concat(...nested);
-}
+// Stashed on window so the parent CreateProject wrapper (which owns the Save
+// click) can read the selected KG name without prop-drilling through
+// useImportPage. Set on selection, read (and consumed) after project create.
+const WINDOW_KG_KEY = "__berry_kg_to_import";
 
-// Keep in sync with core.settings.SUPPORTED_EXTENSIONS on the BE.
-const supportedExtensions = {
-  text: ["txt"],
-  audio: ["wav", "mp3", "flac", "m4a", "ogg"],
-  video: ["mp4", "webm"],
-  image: ["bmp", "gif", "jpg", "jpeg", "png", "svg", "webp"],
-  html: ["html", "htm", "xml"],
-  pdf: ["pdf"],
-  structuredData: ["csv", "tsv", "json"],
-};
-const allSupportedExtensions = flatten(Object.values(supportedExtensions));
-
-function getFileExtension(fileName) {
-  if (!fileName) {
-    return fileName;
-  }
-  return fileName.split(".").pop().toLowerCase();
-}
-
-function traverseFileTree(item, path) {
-  return new Promise((resolve) => {
-    path = path || "";
-    if (item.isFile) {
-      // Avoid hidden files
-      if (item.name[0] === ".") return resolve([]);
-
-      resolve([item]);
-    } else if (item.isDirectory) {
-      // Get folder contents
-      const dirReader = item.createReader();
-      const dirPath = `${path + item.name}/`;
-
-      dirReader.readEntries((entries) => {
-        Promise.all(entries.map((entry) => traverseFileTree(entry, dirPath)))
-          .then(flatten)
-          .then(resolve);
-      });
+// Hook that fires POST /studio/ls/import_from_kg once we know the finalized
+// project id. Called from a fetch monkey-patch that watches for LS's
+// PATCH /api/projects/<id> completion during Save.
+async function importKgIntoProject(projectId, kgName) {
+  if (!projectId || !kgName) return;
+  const url =
+    `${MCP_CLIENT_BASE}/studio/ls/import_from_kg` +
+    `?ls_project_id=${encodeURIComponent(projectId)}` +
+    `&database_name=${encodeURIComponent(kgName)}` +
+    `&berry_api_key=`;
+  try {
+    const res = await fetch(url, { method: "POST" });
+    if (!res.ok) {
+      // eslint-disable-next-line no-console
+      console.error("[Berry] KG import failed:", res.status, await res.text());
     }
-  });
-}
-
-function getFiles(files) {
-  // @todo this can be not a files, but text or any other draggable stuff
-  return new Promise((resolve) => {
-    if (!files.length) return resolve([]);
-    if (!files[0].webkitGetAsEntry) return resolve(files);
-
-    // Use DataTransferItemList interface to access the file(s)
-    const entries = Array.from(files).map((file) => file.webkitGetAsEntry());
-
-    Promise.all(entries.map(traverseFileTree))
-      .then(flatten)
-      .then((fileEntries) => fileEntries.map((fileEntry) => new Promise((res) => fileEntry.file(res))))
-      .then((filePromises) => Promise.all(filePromises))
-      .then(resolve);
-  });
-}
-
-const Upload = ({ children, sendFiles }) => {
-  const [hovered, setHovered] = useState(false);
-  const onHover = (e) => {
-    e.preventDefault();
-    setHovered(true);
-  };
-  const onLeave = setHovered.bind(null, false);
-  const dropzoneRef = useRef();
-
-  const onDrop = useCallback(
-    (e) => {
-      e.preventDefault();
-      onLeave();
-      getFiles(e.dataTransfer.items).then((files) => sendFiles(files));
-    },
-    [onLeave, sendFiles],
-  );
-
-  return (
-    <div
-      id="holder"
-      className={dropzoneClass.mod({ hovered }).toClassName()}
-      ref={dropzoneRef}
-      onDragStart={onHover}
-      onDragOver={onHover}
-      onDragLeave={onLeave}
-      onDrop={onDrop}
-      // {...getRootProps}
-    >
-      {children}
-    </div>
-  );
-};
-
-const ErrorMessage = ({ error }) => {
-  if (!error) return null;
-  let extra = error.validation_errors ?? error.extra;
-  // support all possible responses
-
-  if (extra && typeof extra === "object" && !Array.isArray(extra)) {
-    extra = extra.non_field_errors ?? Object.values(extra);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[Berry] KG import network error:", err);
   }
-  if (Array.isArray(extra)) extra = extra.join("; ");
+  // ALWAYS navigate to the task list after the import attempt. LS's own
+  // onCreate would push('/projects/<id>/data') only if finishUpload()
+  // returned truthy — but finishUpload calls reimportFiles with our
+  // synthetic ['berry-kg://…'] fileIds, which the LS backend rejects,
+  // so imported=null and LS's push never fires. Result: user ends up
+  // stranded on /projects/ (the list). User bug 2026-08-17: 'when we
+  // import and select a KG it imports but comes back to the project
+  // list page, it should stay in task list'.
+  try {
+    if (typeof window !== "undefined" && window.location) {
+      const prefix = window.location.pathname.startsWith("/label-studio")
+        ? "/label-studio"
+        : "";
+      // Small delay so LS's own re-render / route settle before we override.
+      setTimeout(() => {
+        window.location.assign(`${prefix}/projects/${projectId}/data`);
+      }, 150);
+    }
+  } catch (_e) { /* ignore */ }
+}
 
-  return (
-    <div className={importClass.elem("error").toClassName()}>
-      <IconErrorAlt width="24" height="24" />
-      {error.id && `[${error.id}] `}
-      {error.detail || error.message}
-      {extra && ` (${extra})`}
-    </div>
-  );
-};
+// Install a fetch monkey-patch ONCE per page load. Watches for LS's
+// PATCH /api/projects/<id> (with `is_draft: false` body) — that's the request
+// that flips a draft project into a real project during CreateProject's Save
+// flow. On success, fire the KG import.
+function installKgSaveHook() {
+  if (typeof window === "undefined") return;
+  if (window.__berry_kg_hook_installed) return;
+  window.__berry_kg_hook_installed = true;
+
+  const origFetch = window.fetch.bind(window);
+  window.fetch = async function berryFetchInterceptor(input, init) {
+    const res = await origFetch(input, init);
+    try {
+      const url = typeof input === "string" ? input : input?.url || "";
+      const method = (init?.method || (typeof input !== "string" && input?.method) || "GET").toUpperCase();
+      // LS uses PATCH for updateProject in CreateProject.onCreate.
+      const isProjectPatch =
+        (method === "PATCH" || method === "POST") &&
+        /\/api\/projects\/\d+\/?(\?|$)/.test(url);
+      if (!isProjectPatch || !res.ok) return res;
+
+      const kgName = window[WINDOW_KG_KEY];
+      if (!kgName) return res;
+
+      // Extract project id from URL first, then confirm via response body if possible.
+      const m = url.match(/\/api\/projects\/(\d+)/);
+      const projectId = m ? Number(m[1]) : null;
+      if (!projectId) return res;
+
+      // Consume the sentinel so a subsequent PATCH (e.g. from settings edit)
+      // doesn't re-trigger the import.
+      window[WINDOW_KG_KEY] = null;
+
+      // Fire-and-forget; don't block LS's own success path.
+      importKgIntoProject(projectId, kgName);
+    } catch (_err) {
+      // Never let the interceptor break the underlying fetch.
+    }
+    return res;
+  };
+}
 
 export const ImportPage = ({
   project,
-  sample,
   show = true,
   onWaiting,
   onFileListUpdate,
+  // Upstream props we ignore — destructured to swallow, avoid unused warnings.
+  // eslint-disable-next-line no-unused-vars
+  sample,
+  // eslint-disable-next-line no-unused-vars
   onSampleDatasetSelect,
+  // eslint-disable-next-line no-unused-vars
   highlightCsvHandling,
+  // eslint-disable-next-line no-unused-vars
   dontCommitToProject = false,
+  // eslint-disable-next-line no-unused-vars
   csvHandling,
+  // eslint-disable-next-line no-unused-vars
   setCsvHandling,
   addColumns,
+  // eslint-disable-next-line no-unused-vars
   openLabelingConfig,
 }) => {
-  const [error, setError] = useState();
-  const [newlyUploadedFiles, setNewlyUploadedFiles] = useState(new Set());
-  const prevUploadedRef = useRef(new Set());
-  const api = useAPI();
-  const projectConfigured = project?.label_config !== "<View></View>";
-  const sampleConfig = useAtomValue(sampleDatasetAtom);
-
-  const processFiles = (state, action) => {
-    if (action.sending) {
-      return { ...state, uploading: [...action.sending, ...state.uploading] };
-    }
-    if (action.sent) {
-      return {
-        ...state,
-        uploading: state.uploading.filter((f) => !action.sent.includes(f)),
-      };
-    }
-    if (action.uploaded) {
-      return {
-        ...state,
-        uploaded: unique([...state.uploaded, ...action.uploaded], (a, b) => a.id === b.id),
-      };
-    }
-    if (action.ids) {
-      const ids = unique([...state.ids, ...action.ids]);
-
-      onFileListUpdate?.(ids);
-      return { ...state, ids };
-    }
-    return state;
-  };
-
-  const [files, dispatch] = useReducer(processFiles, {
-    uploaded: [],
-    uploading: [],
-    ids: [],
-  });
-  const showList = Boolean(files.uploaded?.length || files.uploading?.length || sample);
-
-  const loadFilesList = useCallback(
-    async (file_upload_ids) => {
-      const query = {};
-
-      if (file_upload_ids) {
-        // should be stringified array "[1,2]"
-        query.ids = JSON.stringify(file_upload_ids);
-      }
-      const files = await api.callApi("fileUploads", {
-        params: { pk: project.id, ...query },
-      });
-
-      dispatch({ uploaded: files ?? [] });
-
-      if (files?.length) {
-        dispatch({ ids: files.map((f) => f.id) });
-      }
-      return files;
-    },
-    [project?.id],
+  const [kgs, setKgs] = useState([]);
+  const [loadingKgs, setLoadingKgs] = useState(false);
+  const [selectedKG, setSelectedKG] = useState(
+    (typeof window !== "undefined" && window[WINDOW_KG_KEY]) || "",
   );
+  const [error, setError] = useState("");
+  const mountedRef = useRef(true);
 
-  const onError = (err) => {
-    console.error(err);
-    // @todo workaround for error about input size in a wrong html format
-    if (typeof err === "string" && err.includes("RequestDataTooBig")) {
-      const message = "Imported file is too big";
-      const extra = err.match(/"exception_value">(.*)<\/pre>/)?.[1];
+  // Install the fetch hook exactly once per page (idempotent).
+  useEffect(() => {
+    installKgSaveHook();
+  }, []);
 
-      err = { message, extra };
-    }
-    setError(err);
-    onWaiting?.(false);
-  };
-  const onFinish = useCallback(
-    async (res) => {
-      const { could_be_tasks_list, data_columns, file_upload_ids } = res;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
-      dispatch({ ids: file_upload_ids });
-      if (could_be_tasks_list && !csvHandling) setCsvHandling("choose");
+  // Load KG list on mount.
+  useEffect(() => {
+    if (!show) return;
+    let cancelled = false;
+    setLoadingKgs(true);
+    setError("");
+    fetch(`${MCP_CLIENT_BASE}/studio/ls/list_kgs?berry_api_key=`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data?.success === false) {
+          setError(data.error || "Failed to load Knowledge Graphs");
+          setKgs([]);
+        } else {
+          setKgs(data?.knowledge_graphs || []);
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err?.message || String(err));
+        setKgs([]);
+      })
+      .finally(() => !cancelled && setLoadingKgs(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [show]);
+
+  // When the user picks a KG, flip `uploadDisabled` false so the Save button
+  // enables. We reuse LS's `onFileListUpdate` (destined for useImportPage's
+  // setFileIds) to hand it a synthetic non-empty list — but the real
+  // `uploadDisabled` gate in useImportPage is `csvHandling === "choose"`, so
+  // that flag is fine as-is (undefined = not blocked). We still call the
+  // callback so downstream state is coherent.
+  const onSelect = useCallback(
+    (name) => {
+      setSelectedKG(name);
+      window[WINDOW_KG_KEY] = name || null;
+      if (name) {
+        // Synthetic file id so downstream UI shows "1 file selected".
+        onFileListUpdate?.([`berry-kg://${name}`]);
+        // Add a placeholder column so ConfigPage doesn't show "no data" —
+        // LS templates need `$undefined$` or actual columns.
+        addColumns?.(["$undefined$"]);
+      } else {
+        onFileListUpdate?.([]);
+      }
       onWaiting?.(false);
-      addColumns(data_columns);
-
-      await loadFilesList(file_upload_ids);
-      return res;
     },
-    [addColumns, loadFilesList],
+    [onFileListUpdate, addColumns, onWaiting],
   );
-
-  // Track newly uploaded files for flash animation
-  useEffect(() => {
-    const currentUploadedIds = new Set(files.uploaded.map((f) => f.id));
-    const previousUploadedIds = prevUploadedRef.current;
-
-    // Find files that were just uploaded (in current but not in previous)
-    const justUploaded = new Set([...currentUploadedIds].filter((id) => !previousUploadedIds.has(id)));
-
-    // Update the ref immediately after comparison to ensure it's available for next run
-    prevUploadedRef.current = new Set(currentUploadedIds);
-
-    // Clean up animation state for files that are no longer in the uploaded list
-    setNewlyUploadedFiles((prev) => {
-      const filtered = new Set([...prev].filter((id) => currentUploadedIds.has(id)));
-      return filtered;
-    });
-
-    // Animate newly uploaded files (including first upload)
-    if (justUploaded.size > 0) {
-      // Apply animation class immediately for better responsiveness
-      setNewlyUploadedFiles((prev) => new Set([...prev, ...justUploaded]));
-
-      // Remove animation class after animation completes (CSS handles the animation timing)
-      const timeoutId = setTimeout(() => {
-        setNewlyUploadedFiles((prev) => {
-          const updated = new Set(prev);
-          justUploaded.forEach((id) => updated.delete(id));
-          return updated;
-        });
-      }, FLASH_ANIMATION_DURATION);
-
-      // Cleanup timeout on unmount or dependency change
-      return () => clearTimeout(timeoutId);
-    }
-  }, [files.uploaded]);
-
-  const importFilesImmediately = useCallback(
-    async (files, body) => {
-      importFiles({
-        files,
-        body,
-        project,
-        onError,
-        onFinish,
-        onUploadStart: (files) => dispatch({ sending: files }),
-        onUploadFinish: (files) => dispatch({ sent: files }),
-        dontCommitToProject,
-      });
-    },
-    [project, onFinish],
-  );
-
-  const sendFiles = useCallback(
-    (files) => {
-      setError(null);
-      onWaiting?.(true);
-      files = [...files]; // they can be array-like object
-      const fd = new FormData();
-
-      for (const f of files) {
-        if (!allSupportedExtensions.includes(getFileExtension(f.name))) {
-          onError(new Error(`The filetype of file "${f.name}" is not supported.`));
-          return;
-        }
-        fd.append(f.name, f);
-      }
-      return importFilesImmediately(files, fd);
-    },
-    [importFilesImmediately],
-  );
-
-  const onUpload = useCallback(
-    (e) => {
-      sendFiles(e.target.files);
-      e.target.value = "";
-    },
-    [sendFiles],
-  );
-
-  const onLoadURL = useCallback(
-    (e) => {
-      e.preventDefault();
-      setError(null);
-      const url = urlRef.current?.value;
-
-      if (!url) {
-        return;
-      }
-      urlRef.current.value = "";
-      onWaiting?.(true);
-      const body = new URLSearchParams({ url });
-
-      importFilesImmediately([{ name: url }], body);
-    },
-    [importFilesImmediately],
-  );
-
-  const openConfig = useCallback(
-    (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      openLabelingConfig?.();
-    },
-    [openLabelingConfig],
-  );
-
-  useEffect(() => {
-    if (project?.id !== undefined) {
-      loadFilesList().then((files) => {
-        if (csvHandling) return;
-        // empirical guess on start if we have some possible tasks list/structured data problem
-        if (Array.isArray(files) && files.some(({ file }) => /\.[ct]sv$/.test(file))) {
-          setCsvHandling("choose");
-        }
-      });
-    }
-  }, [project?.id, loadFilesList]);
-
-  const urlRef = useRef();
 
   if (!project) return null;
   if (!show) return null;
 
-  const csvProps = {
-    name: "csv",
-    type: "radio",
-    onChange: (e) => setCsvHandling(e.target.value),
-  };
-
   return (
-    <div className={importClass}>
-      {highlightCsvHandling && <div className={importClass.elem("csv-splash").toClassName()} />}
-      <input id="file-input" type="file" name="file" multiple onChange={onUpload} style={{ display: "none" }} />
-
-      <header className="flex gap-4">
-        <form
-          className={`${importClass.elem("url-form")} inline-flex items-stretch`}
-          method="POST"
-          onSubmit={onLoadURL}
-        >
-          <Input placeholder="Dataset URL" name="url" ref={urlRef} rawClassName="h-[40px]" />
-          <Button variant="primary" look="outlined" type="submit" aria-label="Add URL">
-            Add URL
-          </Button>
-        </form>
-        <span>or</span>
-        <Button
-          variant="primary"
-          look="outlined"
-          type="button"
-          onClick={() => document.getElementById("file-input").click()}
-          leading={<IconUpload />}
-          aria-label="Upload file"
-        >
-          Upload {files.uploaded.length ? "More " : ""}Files
-        </Button>
-        {ff.isActive(ff.FF_SAMPLE_DATASETS) && (
-          <SampleDatasetSelect samples={samples} sample={sample} onSampleApplied={onSampleDatasetSelect} />
-        )}
-        <div
-          className={importClass
-            .elem("csv-handling")
-            .mod({ highlighted: highlightCsvHandling, hidden: !csvHandling })
-            .toClassName()}
-        >
-          <span>Treat CSV/TSV as</span>
-          <label>
-            <input {...csvProps} value="tasks" checked={csvHandling === "tasks"} /> List of tasks
-          </label>
-          <label>
-            <input {...csvProps} value="ts" checked={csvHandling === "ts"} /> Time Series or Whole Text File
-          </label>
+    <div className={importClass} style={{ padding: "24px", overflow: "auto" }}>
+      <div style={{ maxWidth: 640, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
+        <div>
+          <Typography variant="headline" size="small">
+            Import from Knowledge Graph
+          </Typography>
+          <Typography variant="body" size="small" style={{ marginTop: 6, color: "var(--color-neutral-content-subtle)" }}>
+            Pick a BerryDB Knowledge Graph. On Save, its documents are pulled in as Label Studio tasks for this project.
+          </Typography>
         </div>
-        <div className={importClass.elem("status").toClassName()}>
-          {files.uploaded.length ? `${files.uploaded.length} files uploaded` : ""}
-        </div>
-      </header>
 
-      <ErrorMessage error={error} />
-
-      <main>
-        <Upload sendFiles={sendFiles} project={project}>
-          <div
-            className={scn("flex gap-4 w-full min-h-full", {
-              "justify-center": !showList,
-            })}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label
+            htmlFor="berry-kg-select"
+            style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.03em" }}
           >
-            {!showList && (
-              <div className="flex gap-4 justify-center items-start w-full h-full">
-                <label htmlFor="file-input" className="w-full h-full">
-                  <div className={`${dropzoneClass.elem("content")} w-full`}>
-                    <IconFileUpload height="64" className={dropzoneClass.elem("icon").toClassName()} />
-                    <header>
-                      Drag & drop files here
-                      <br />
-                      or click to browse
-                    </header>
+            Knowledge Graph
+          </label>
+          <select
+            id="berry-kg-select"
+            value={selectedKG}
+            onChange={(e) => onSelect(e.target.value)}
+            disabled={loadingKgs}
+            style={{
+              height: 40,
+              padding: "0 12px",
+              border: "1px solid var(--color-neutral-border, #d0d0d0)",
+              borderRadius: 6,
+              fontSize: 14,
+              background: "var(--color-neutral-background, #fff)",
+            }}
+          >
+            <option value="">
+              {loadingKgs ? "Loading Knowledge Graphs..." : `Select from ${kgs.length} KG${kgs.length === 1 ? "" : "s"}...`}
+            </option>
+            {kgs.map((kg) => (
+              <option key={kg.name} value={kg.name}>
+                {kg.name}
+                {kg.schema ? ` (${kg.schema})` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
 
-                    <dl>
-                      <dt>Images</dt>
-                      <dd>{supportedExtensions.image.join(", ")}</dd>
-                      <dt>Audio</dt>
-                      <dd>{supportedExtensions.audio.join(", ")}</dd>
-                      <dt>
-                        <div className="flex items-center gap-1">
-                          Video
-                          <Tooltip title="Video format support depends on your browser. Click to learn more.">
-                            <a
-                              href="https://labelstud.io/tags/video#Video-format"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center"
-                              aria-label="Learn more about video format support (opens in a new tab)"
-                            >
-                              <IconInfoOutline className="w-4 h-4 text-primary-content hover:text-primary-content-hover" />
-                            </a>
-                          </Tooltip>
-                        </div>
-                      </dt>
-                      <dd>{supportedExtensions.video.join(", ")}</dd>
-                      <dt>HTML / HyperText</dt>
-                      <dd>{supportedExtensions.html.join(", ")}</dd>
-                      <dt>Text</dt>
-                      <dd>{supportedExtensions.text.join(", ")}</dd>
-                      <dt>Structured data</dt>
-                      <dd>{supportedExtensions.structuredData.join(", ")}</dd>
-                      <dt>PDF</dt>
-                      <dd>{supportedExtensions.pdf.join(", ")}</dd>
-                    </dl>
-                    <div className="tips">
-                      <b>Important:</b>
-                      <ul className="mt-2 ml-4 list-disc font-normal">
-                        <li>
-                          We recommend{" "}
-                          <a
-                            href="https://labelstud.io/guide/storage.html"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label="Cloud Storage documentation (opens in a new tab)"
-                          >
-                            Cloud Storage
-                          </a>{" "}
-                          over direct uploads due to{" "}
-                          <a
-                            href="https://labelstud.io/guide/tasks.html#Import-data-from-the-Label-Studio-UI"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label="Upload limitations documentation (opens in a new tab)"
-                          >
-                            upload limitations
-                          </a>
-                          .
-                        </li>
-                        <li>
-                          For PDFs, use{" "}
-                          <a
-                            href="https://labelstud.io/templates/multi-page-document-annotation"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label="Multi-image labeling documentation (opens in a new tab)"
-                          >
-                            multi-image labeling
-                          </a>
-                          . JSONL or Parquet (Enterprise only) files require cloud storage.
-                        </li>
-                        <li>
-                          Check the documentation to{" "}
-                          <a target="_blank" href="https://labelstud.io/guide/predictions.html" rel="noreferrer">
-                            import preannotated data
-                          </a>
-                          .
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-                </label>
-              </div>
-            )}
-
-            {showList && (
-              <div className="w-full">
-                <SimpleCard
-                  title="Files"
-                  className="w-full h-full"
-                  contentClassName="overflow-y-auto h-[calc(100%-48px)]"
-                >
-                  <table className="w-full">
-                    <tbody>
-                      {sample && (
-                        <tr key={sample.url}>
-                          <td>
-                            <div className="flex items-center gap-2">
-                              {sample.title}
-                              <Badge>Sample</Badge>
-                            </div>
-                          </td>
-                          <td>{sample.description}</td>
-                          <td>
-                            <Button size="smaller" variant="negative" onClick={() => onSampleDatasetSelect(undefined)}>
-                              <IconTrash className="w-4 h-4" />
-                            </Button>
-                          </td>
-                        </tr>
-                      )}
-                      {files.uploaded.map((file) => {
-                        const truncatedFilename = truncate(
-                          file.file,
-                          FILENAME_TRUNCATE_START,
-                          FILENAME_TRUNCATE_END,
-                          "...",
-                        );
-                        return (
-                          <tr
-                            key={file.file}
-                            className={newlyUploadedFiles.has(file.id) ? importClass.elem("upload-flash") : ""}
-                          >
-                            <td className={importClass.elem("file-name").toClassName()}>
-                              <Tooltip title={file.file}>
-                                <Typography variant="body" size="small" className="truncate">
-                                  {truncatedFilename}
-                                </Typography>
-                              </Tooltip>
-                            </td>
-                            <td>
-                              <span className={importClass.elem("file-status").toClassName()} />
-                            </td>
-                            <td className={importClass.elem("file-size").toClassName()}>
-                              <Typography
-                                variant="body"
-                                size="smaller"
-                                className="text-nowrap text-neutral-content-subtle text-right"
-                              >
-                                {file.size ? formatFileSize(file.size) : ""}
-                              </Typography>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      {files.uploading.map((file, idx) => {
-                        const truncatedFilename = truncate(
-                          file.name,
-                          FILENAME_TRUNCATE_START,
-                          FILENAME_TRUNCATE_END,
-                          "...",
-                        );
-                        return (
-                          <tr key={`${idx}-${file.name}`}>
-                            <td className={importClass.elem("file-name").toClassName()}>
-                              <Tooltip title={file.name}>
-                                <Typography variant="body" size="small" className="truncate">
-                                  {truncatedFilename}
-                                </Typography>
-                              </Tooltip>
-                            </td>
-                            <td>
-                              <span
-                                className={importClass.elem("file-status").mod({ uploading: true }).toClassName()}
-                              />
-                            </td>
-                            <td className={importClass.elem("file-size").toClassName()}>&nbsp;</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </SimpleCard>
-              </div>
-            )}
-
-            {ff.isFF(ff.FF_JSON_PREVIEW) && (
-              <div className="w-full h-full flex flex-col min-h-[400px]">
-                {projectConfigured ? (
-                  <SimpleCard
-                    title="Expected Input Preview"
-                    className="w-full h-full overflow-hidden flex flex-col"
-                    contentClassName="h-[calc(100%-48px)]"
-                    flushContent
-                  >
-                    {sampleConfig.data ? (
-                      <div className={importClass.elem("code-wrapper").toClassName()}>
-                        <CodeBlock
-                          title="Expected Input Preview"
-                          code={sampleConfig?.data ?? ""}
-                          className="w-full h-full"
-                        />
-                      </div>
-                    ) : sampleConfig.isLoading ? (
-                      <div className="w-full flex justify-center py-12">
-                        <Spinner className="h-6 w-6" />
-                      </div>
-                    ) : sampleConfig.isError ? (
-                      <div className="w-[calc(100%-24px)] text-lg text-negative-content bg-negative-background border m-3 rounded-md border-negative-border-subtle p-4">
-                        Something went wrong, the sample data could not be loaded.
-                      </div>
-                    ) : null}
-                  </SimpleCard>
-                ) : (
-                  <SimpleCard className="w-full h-full flex flex-col items-center justify-center text-center p-wide">
-                    <div className="flex flex-col items-center gap-tight">
-                      <div className="bg-primary-background rounded-largest p-tight flex items-center justify-center">
-                        <IconCode className="w-6 h-6 text-primary-icon" />
-                      </div>
-                      <div className="flex flex-col items-center gap-tighter">
-                        <div className="text-label-small text-neutral-content font-medium">View JSON input format</div>
-                        <div className="text-body-small text-neutral-content-subtler text-center">
-                          Setup your{" "}
-                          <Button
-                            type="button"
-                            look="string"
-                            onClick={openConfig}
-                            className="border-none bg-none p-0 m-0 text-primary-content underline"
-                          >
-                            labeling configuration
-                          </Button>{" "}
-                          first to preview the expected JSON data format
-                        </div>
-                      </div>
-                    </div>
-                  </SimpleCard>
-                )}
-              </div>
-            )}
+        {error && (
+          <div
+            style={{
+              padding: "10px 12px",
+              borderRadius: 6,
+              background: "var(--color-negative-background, #fef2f2)",
+              color: "var(--color-negative-content, #991b1b)",
+              fontSize: 13,
+              border: "1px solid var(--color-negative-border-subtle, #fecaca)",
+            }}
+          >
+            {error}
           </div>
-        </Upload>
-      </main>
+        )}
+
+        {selectedKG && !error && (
+          <div
+            style={{
+              padding: "10px 12px",
+              borderRadius: 6,
+              background: "var(--color-positive-background, #f0fdf4)",
+              color: "var(--color-positive-content, #166534)",
+              fontSize: 13,
+              border: "1px solid var(--color-positive-border-subtle, #bbf7d0)",
+            }}
+          >
+            Selected: <b>{selectedKG}</b>. Click <b>Save</b> to create the project and import its tasks.
+          </div>
+        )}
+      </div>
     </div>
   );
 };
+
+// Preserved for parity with upstream — nothing else in the LS tree imports
+// non-default symbols from this module (verified via grep of Import/Import").
+// If a future upstream sync introduces a new named import, add it here.

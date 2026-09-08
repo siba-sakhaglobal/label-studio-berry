@@ -1,0 +1,37 @@
+title: Code Descriptions
+type: community
+group: Code
+image: /static/templates/code-descriptions.png
+details: |
+  <h1>Capture technical and business descriptions for code units, plus unverified assumptions and action items</h1>
+  <dl>
+    <dt>Industry Applications</dt>
+    <dd>codebase documentation, business-purpose capture, knowledge transfer for legacy systems, training set for code-summary models, audit-trail enrichment</dd>
+    <dt>Associated Models</dt>
+    <dd>code-summary LLMs, Gemini, GPT, Claude, custom doc generators</dd>
+    <dt>Domain Terminology</dt>
+    <dd>technical description, business purpose, unverified assumption, action needed, dialect-specific concern</dd>
+  </dl>
+config: |
+  <View>
+    <Text name="code" value="$name"/>
+    <Header value="Technical Description"/>
+    <TextArea name="description" toName="code"
+      placeholder="What does this code unit do technically?"
+      rows="3" maxSubmissions="1" editable="true"/>
+
+    <Header value="Business Purpose"/>
+    <TextArea name="business_purpose" toName="code"
+      placeholder="Why does this exist? What business problem does it solve?"
+      rows="3" maxSubmissions="1" editable="true"/>
+
+    <Header value="Unverified / Assumption Notes"/>
+    <TextArea name="unverified_notes" toName="code"
+      placeholder="Document any UNVERIFIED behaviors, assumptions, or dialect-specific concerns..."
+      rows="2" maxSubmissions="1" editable="true"/>
+
+    <Header value="Action Needed (for stubs / unverified items)"/>
+    <TextArea name="action_needed" toName="code"
+      placeholder="What must be resolved before production? Leave blank if none."
+      rows="2" maxSubmissions="1" editable="true"/>
+  </View>

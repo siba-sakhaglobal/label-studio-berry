@@ -85,3 +85,6 @@ CLAUDE.local.md
 web/libs/editor/tests/coverage
 web/coverage-chunks
 .cache
+
+# Merge/patch backups — not committed.
+*.orig

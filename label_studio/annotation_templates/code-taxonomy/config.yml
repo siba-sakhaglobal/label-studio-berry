@@ -1,0 +1,94 @@
+title: Code Hierarchical Taxonomy
+type: community
+group: Code
+image: /static/templates/code-taxonomy.png
+details: |
+  <h1>Tag code units with a hierarchical taxonomy covering language, domain, pattern family, and complexity</h1>
+  <dl>
+    <dt>Industry Applications</dt>
+    <dd>multi-dialect codebase organisation, ERP module mapping, pattern catalogues, dialect-aware code retrieval, training-set construction</dd>
+    <dt>Associated Models</dt>
+    <dd>multi-label classifiers, embedding-based retrievers, LLM-assisted taxonomy assignment</dd>
+    <dt>Domain Terminology</dt>
+    <dd>PICK Basic, UniBasic, ERP inventory, error handling family, record locking, audit trail, ID generation</dd>
+  </dl>
+config: |
+  <View>
+    <Text name="code" value="$name"/>
+    <Taxonomy name="taxonomy" toName="code" maxUsages="5">
+      <Choice value="Language">
+        <Choice value="PICK Basic">
+          <Choice value="UniBasic"/>
+          <Choice value="D3"/>
+          <Choice value="jBase"/>
+          <Choice value="OpenQM"/>
+        </Choice>
+        <Choice value="Python"/>
+        <Choice value="Java"/>
+        <Choice value="JavaScript"/>
+        <Choice value="TypeScript"/>
+        <Choice value="COBOL"/>
+        <Choice value="RPG"/>
+      </Choice>
+
+      <Choice value="Domain">
+        <Choice value="ERP">
+          <Choice value="Inventory"/>
+          <Choice value="Procurement"/>
+          <Choice value="Finance"/>
+          <Choice value="Manufacturing"/>
+          <Choice value="Sales"/>
+        </Choice>
+        <Choice value="Healthcare"/>
+        <Choice value="Finance"/>
+        <Choice value="Logistics"/>
+        <Choice value="HR"/>
+      </Choice>
+
+      <Choice value="BerryDB Category">
+        <Choice value="Structured Data Parsing">
+          <Choice value="Code Analysis"/>
+          <Choice value="Code Knowledge Graph"/>
+          <Choice value="Legacy Code Analysis"/>
+          <Choice value="Call Graph Extraction"/>
+          <Choice value="Business Rule Mining"/>
+          <Choice value="Audit Pattern Detection"/>
+          <Choice value="SRS Analysis"/>
+          <Choice value="Architecture Analysis"/>
+        </Choice>
+        <Choice value="Natural Language Processing">
+          <Choice value="Named Entity Recognition"/>
+          <Choice value="Relation Extraction"/>
+          <Choice value="Text Classification"/>
+          <Choice value="Taxonomy"/>
+        </Choice>
+      </Choice>
+
+      <Choice value="Pattern Family">
+        <Choice value="Error Handling">
+          <Choice value="ERR.CODE + ERR.MSG"/>
+          <Choice value="Exception Based"/>
+          <Choice value="Result Type"/>
+        </Choice>
+        <Choice value="Record Locking">
+          <Choice value="READU Exclusive"/>
+          <Choice value="READL Shared"/>
+          <Choice value="Retry Loop"/>
+        </Choice>
+        <Choice value="Audit Trail">
+          <Choice value="Composite Key Log"/>
+          <Choice value="Before/After Values"/>
+        </Choice>
+        <Choice value="ID Generation">
+          <Choice value="Sequential Counter"/>
+          <Choice value="UUID"/>
+        </Choice>
+      </Choice>
+
+      <Choice value="Complexity">
+        <Choice value="Low"/>
+        <Choice value="Medium"/>
+        <Choice value="High"/>
+      </Choice>
+    </Taxonomy>
+  </View>

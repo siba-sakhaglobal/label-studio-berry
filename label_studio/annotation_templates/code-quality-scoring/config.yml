@@ -1,0 +1,32 @@
+title: Code Quality Scoring
+type: community
+group: Code
+image: /static/templates/code-quality-scoring.png
+details: |
+  <h1>Score code units for implementation completeness, annotation confidence, and structural complexity metrics</h1>
+  <dl>
+    <dt>Industry Applications</dt>
+    <dd>code-quality dashboards, annotation QA, technical-debt scoring, modernization prioritisation, supplier code review</dd>
+    <dt>Associated Models</dt>
+    <dd>static analysers, cyclomatic complexity tools, LLM-assisted quality scorers</dd>
+    <dt>Domain Terminology</dt>
+    <dd>implementation completeness, annotation confidence, cyclomatic complexity, attribute positions, parameter count</dd>
+  </dl>
+config: |
+  <View>
+    <Text name="code" value="$name"/>
+    <Header value="Implementation Completeness (1=stub, 5=production-ready)"/>
+    <Rating name="completeness" toName="code" maxRating="5" icon="star" required="true"/>
+
+    <Header value="Annotation Confidence (how sure are you of the tagging?)"/>
+    <Rating name="confidence" toName="code" maxRating="5" icon="star" required="true"/>
+
+    <Header value="Approx. Cyclomatic Complexity (decision points + 1)"/>
+    <Number name="cyclomatic" toName="code" min="1" max="100"/>
+
+    <Header value="Number of Parameters"/>
+    <Number name="param_count" toName="code" min="0" max="20"/>
+
+    <Header value="Number of Attribute Positions Accessed (PICK)"/>
+    <Number name="attr_count" toName="code" min="0" max="100"/>
+  </View>

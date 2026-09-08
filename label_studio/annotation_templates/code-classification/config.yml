@@ -1,0 +1,84 @@
+title: Code Document Classification
+type: community
+group: Code
+image: /static/templates/code-classification.png
+details: |
+  <h1>Classify code documents by node type, sub-type, error pattern, complexity, and boolean flags</h1>
+  <dl>
+    <dt>Industry Applications</dt>
+    <dd>code knowledge graph enrichment, codebase cataloguing, complexity scoring, audit-readiness tagging, legacy-system inventory</dd>
+    <dt>Associated Models</dt>
+    <dd>rule-based classifiers, fine-tuned LLMs, embedding-based retrieval, supervised classifiers</dd>
+    <dt>Domain Terminology</dt>
+    <dd>node type, sub-type, error pattern, cyclomatic complexity, entry point, audit trail, record locking</dd>
+  </dl>
+config: |
+  <View>
+    <Text name="code" value="$name"/>
+    <Header value="Node Type"/>
+    <Choices name="node_type" toName="code" choice="single" required="true">
+      <Choice value="project"/>
+      <Choice value="file"/>
+      <Choice value="symbol"/>
+      <Choice value="data_store"/>
+      <Choice value="rule"/>
+      <Choice value="pattern"/>
+      <Choice value="annotation"/>
+    </Choices>
+
+    <Header value="Sub-Type"/>
+    <Choices name="sub_type" toName="code" choice="single">
+      <Choice value="main_program"/>
+      <Choice value="subroutine"/>
+      <Choice value="gosub_section"/>
+      <Choice value="function"/>
+      <Choice value="module"/>
+      <Choice value="class"/>
+      <Choice value="trigger"/>
+      <Choice value="proc"/>
+      <Choice value="pick_file"/>
+      <Choice value="relational_table"/>
+      <Choice value="api_endpoint"/>
+      <Choice value="message_queue"/>
+      <Choice value="format_validation"/>
+      <Choice value="mandatory_field"/>
+      <Choice value="range_check"/>
+      <Choice value="conditional_logic"/>
+      <Choice value="uniqueness"/>
+      <Choice value="state_machine"/>
+      <Choice value="audit_requirement"/>
+      <Choice value="error_handling"/>
+      <Choice value="record_locking"/>
+      <Choice value="audit_trail"/>
+      <Choice value="id_generation"/>
+      <Choice value="input_validation"/>
+      <Choice value="pagination"/>
+    </Choices>
+
+    <Header value="Error Pattern"/>
+    <Choices name="error_pattern" toName="code" choice="single">
+      <Choice value="err_code_msg"/>
+      <Choice value="err_code_msg_additive"/>
+      <Choice value="err_code_passthrough"/>
+      <Choice value="inline_crt"/>
+      <Choice value="exception"/>
+      <Choice value="result_type"/>
+      <Choice value="none"/>
+    </Choices>
+
+    <Header value="Complexity"/>
+    <Choices name="complexity" toName="code" choice="single">
+      <Choice value="low"/>
+      <Choice value="medium"/>
+      <Choice value="high"/>
+    </Choices>
+
+    <Header value="Boolean Flags (select all that apply)"/>
+    <Choices name="flags" toName="code" choice="multiple">
+      <Choice value="reusable"/>
+      <Choice value="has_audit_trail"/>
+      <Choice value="has_record_locking"/>
+      <Choice value="entry_point"/>
+      <Choice value="verified"/>
+    </Choices>
+  </View>

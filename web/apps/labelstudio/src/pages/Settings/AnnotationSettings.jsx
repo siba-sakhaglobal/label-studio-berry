@@ -8,6 +8,8 @@ import { cn } from "../../utils/bem";
 import { ModelVersionSelector } from "./AnnotationSettings/ModelVersionSelector";
 import { ProjectContext } from "../../providers/ProjectProvider";
 import { Divider } from "../../components/Divider/Divider";
+// Berry override — sibling file, symlinked from label-studio-berry-internal
+import { BerryModelPicker } from "./BerryModelPicker";
 
 export const AnnotationSettings = () => {
   const { project, fetchProject } = useContext(ProjectContext);
@@ -29,6 +31,13 @@ export const AnnotationSettings = () => {
     <div className={cn("annotation-settings").toClassName()}>
       <div className={cn("annotation-settings").elem("wrapper").toClassName()}>
         <h1>Annotation Settings</h1>
+
+        {/* Berry: prominent model picker at top of the annotation settings.
+            Selecting a model here swaps the connected ML backend + updates
+            the project's model_version, so LS's own ModelVersionSelector
+            below will reflect the new choice on next open. */}
+        <BerryModelPicker />
+
         <div className={cn("settings-wrapper").toClassName()}>
           <Form
             ref={formRef}

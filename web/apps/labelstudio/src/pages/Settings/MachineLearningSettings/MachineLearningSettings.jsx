@@ -11,6 +11,8 @@ import { MachineLearningList } from "./MachineLearningList";
 import { CustomBackendForm } from "./Forms";
 import { TestRequest } from "./TestRequest";
 import { StartModelTraining } from "./StartModelTraining";
+// Berry override — sibling file, symlinked from label-studio-berry-internal
+import { BerryModelPicker } from "../BerryModelPicker";
 import "./MachineLearningSettings.prefix.css";
 
 export const MachineLearningSettings = () => {
@@ -101,6 +103,12 @@ export const MachineLearningSettings = () => {
         <Typography variant="headline" size="medium" className="mb-base">
           Model
         </Typography>
+
+        {/* Berry: prominent model picker at top of the ML settings page.
+            Users can atomically swap the connected Berry backend without
+            hunting for the 3-dot menu on the ml-backend row below. */}
+        <BerryModelPicker onChanged={() => fetchBackends()} />
+
         {loading && <Spinner size={32} />}
         {loaded && backends.length === 0 && (
           <SimpleCard title="" className="bg-primary-background border-primary-border-subtler p-base">
